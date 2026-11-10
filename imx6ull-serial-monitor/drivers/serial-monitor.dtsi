@@ -1,0 +1,25 @@
+/* Include AT THE END of the correct ALPHA eMMC .dts, not as a standalone overlay.
+ * The existing board DTS must define these controllers and pinctrl groups.
+ * Merge into existing nodes of identical names; inspect your DTS before building.
+ */
+&i2c1 {
+    status = "okay";
+    ap3216c@1e {
+        compatible = "study,mon-ap3216c";
+        reg = <0x1e>;
+        status = "okay";
+    };
+};
+&ecspi3 {
+    status = "okay";
+    fsl,spi-num-chipselects = <1>;
+    cs-gpios = <&gpio1 20 GPIO_ACTIVE_LOW>;
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_ecspi3>;
+    icm20608@0 {
+        compatible = "study,mon-icm20608";
+        reg = <0>;
+        spi-max-frequency = <8000000>;
+        status = "okay";
+    };
+};

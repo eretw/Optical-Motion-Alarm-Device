@@ -1,0 +1,2 @@
+设备树：这个设备是 study,mon-ap3216c  ->  compatible匹配  ap_of[]：支持study,mon-ap3216c  -> 内核调用 ap_probe() 初始化设备
+

@@ -1,0 +1,59 @@
+"""Upload deployment archive over the existing serial LOGIN SHELL (not monitor protocol).
+Requires: already logged into the board shell; base64 and sha256sum available.
+The user must close other serial terminals before invoking this program.
+"""
+import argparse
+import base64
+import hashlib
+from pathlib import Path
+import secrets
+import time
+from transport import open_serial
+
+def wait_for(port, token, timeout):
+    end=time.monotonic()+timeout;buf=bytearray()
+    while time.monotonic()<end:
+        buf.extend(port.read(1024))
+        if token.encode() in buf:return
+        if len(buf)>8192:del buf[:-4096]
+    raise TimeoutError(f"Board did not return {token}; check login shell / busybox tools")
+
+def send(port, data):
+    if isinstance(data,str):data=data.encode("ascii")
+    if port.write(data)!=len(data):raise OSError("partial serial write")
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--port",required=True)
+    p.add_argument("--file",default=str(Path(__file__).resolve().parents[1]/"release/serial-monitor-board.tar.gz"))
+    a=p.parse_args();payload=Path(a.file).read_bytes()
+    if len(payload)>8*1024*1024:raise ValueError("Maximum archive size: 8 MiB")
+    digest=hashlib.sha256(payload).hexdigest()
+    tag="MON_"+secrets.token_hex(8)
+    port=open_serial(a.port);heredoc=False
+    try:
+        # The physical board must already be at a root shell, not a password prompt/U-Boot.
+        send(port,"\nstty -echo\n");time.sleep(.3);port.reset_input_buffer()
+        send(port,f"command -v base64 >/dev/null && command -v sha256sum >/dev/null && echo {tag}_READY\n")
+        wait_for(port,tag+"_READY",5)
+        send(port,f"MON_OLD_PS2=$PS2; PS2=''; cat > /tmp/serial-monitor-upload.b64 <<'{tag}_END'\n")
+        heredoc=True
+        encoded=base64.b64encode(payload)
+        for off in range(0,len(encoded),76):
+            send(port,encoded[off:off+76]+b"\n")
+            time.sleep(.012)  # Pace below 115200 8N1; preserve complete canonical lines.
+            if off%76000==0:print(f"Sent {off}/{len(encoded)} base64 bytes")
+        send(port,tag+"_END\n");heredoc=False
+        send(port,f"base64 -d /tmp/serial-monitor-upload.b64 > /tmp/serial-monitor-board.tar.gz && echo '{digest}  /tmp/serial-monitor-board.tar.gz' | sha256sum -c - && echo {tag}_OK\n")
+        wait_for(port,tag+"_OK",30)
+        print("Upload SHA256 verified. Reopen terminal and run:")
+        print("cd /tmp && tar xzf serial-monitor-board.tar.gz")
+        print("sh /tmp/serial-monitor/scripts/install-board.sh")
+    finally:
+        try:
+            if heredoc:send(port,tag+"_END\n");time.sleep(.2)
+            send(port,"stty echo; PS2=${MON_OLD_PS2-'> '}; unset MON_OLD_PS2\n")
+            time.sleep(.2)
+        finally:port.close()
+
+if __name__=="__main__":main()
